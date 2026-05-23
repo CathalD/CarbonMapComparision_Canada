@@ -136,16 +136,33 @@ already set up.
 
 ## 3. Uploading Local Rasters to GEE
 
-GEE cannot read files from your local machine — all rasters must be uploaded
-as GEE assets before the JavaScript script can access them.
+GEE cannot read files from your local machine — rasters must be uploaded as
+GEE assets before the JavaScript script can access them.
 
-**SoilGrids does not need to be uploaded** — it is available directly through
-the GEE community catalog at `projects/soilgrids-isric/assets/ocs_mean`.
+### What does NOT need to be uploaded
 
-The Sothe et al. (2022) dataset must be obtained from its Zenodo repository
-(doi:[10.4121/16686154.v3](https://doi.org/10.4121/16686154.v3)) and uploaded
-manually. The same applies to Geng 2025 and Hengl 2023 if you activate those
-stubs.
+The following are already available through the GEE community catalog and are
+loaded directly by the script — no upload required:
+
+| Product | GEE path | Notes |
+|---------|----------|-------|
+| **Sothe et al. 2022 — Soil Carbon stock** | `projects/sat-io/open-datasets/carbon_stocks_ca/sc` | ImageCollection; script calls `.first()` |
+| **SoilGrids SOC concentration** | `projects/soilgrids-isric/soc_mean` | OCS is computed from this + BDOD |
+| **SoilGrids Bulk density** | `projects/soilgrids-isric/bdod_mean` | Used in OCS depth integration |
+
+> **SoilGrids computation note:** This pipeline does **not** use a pre-integrated
+> OCS asset. OCS (kg/m²) is computed by depth-integrating SOC concentration
+> with bulk density across five standard depth intervals (0–5, 5–15, 15–30,
+> 30–60, 60–100 cm), exactly following the approach validated in Charlie's
+> Place KBA Forest Carbon Assessment v4.2. Band names are confirmed:
+> `soc_0-5cm_mean` … `soc_60-100cm_mean` and `bdod_0-5cm_mean` … `bdod_60-100cm_mean`.
+
+### What DOES need to be uploaded
+
+Only two rasters require a local upload:
+
+1. **Sothe et al. 2022 — Uncertainty raster** (from Zenodo doi:[10.4121/16686154.v3](https://doi.org/10.4121/16686154.v3))
+2. **Geng 2025 / Hengl 2023** — if you activate those stubs (see stub comments in Section 2)
 
 ### 3.1 Create the destination folder (do this once)
 
@@ -164,16 +181,7 @@ earthengine upload image \
   /path/to/local/file.tif
 ```
 
-**Sothe stock raster:**
-
-```bash
-earthengine upload image \
-  --asset_id=users/YOUR_USERNAME/SOC_comparison/sothe_stock_kgm2_native \
-  --crs=EPSG:3978 \
-  /path/to/sothe_soc_stock_0_1m.tif
-```
-
-**Sothe uncertainty raster:**
+**Sothe uncertainty raster** (required — download from Zenodo doi:[10.4121/16686154.v3](https://doi.org/10.4121/16686154.v3)):
 
 ```bash
 earthengine upload image \
@@ -181,6 +189,10 @@ earthengine upload image \
   --crs=EPSG:3978 \
   /path/to/sothe_soc_uncertainty_0_1m.tif
 ```
+
+> **Note:** The Sothe soil carbon **stock** raster does not need uploading — it
+> is available via the sat-io GEE community catalog and is loaded automatically.
+> Only the **uncertainty** raster requires a local upload.
 
 **Geng et al. 2025 — Agriculture Canada 100 m (when activating this stub):**
 
@@ -216,21 +228,29 @@ The status sequence is: `READY → RUNNING → COMPLETED`
 Large files (e.g., Geng 2025 at 100 m, Canada-wide) can take 20–60 minutes.
 **Do not proceed to the GEE script until the upload status shows `COMPLETED`.**
 
-### 3.4 Verify the uploaded asset
+### 3.4 Verify the uploaded uncertainty asset
 
 Once upload completes, paste this into a new GEE Code Editor script and run:
 
 ```javascript
-// Replace with your actual asset path
-var img = ee.Image('users/YOUR_USERNAME/SOC_comparison/sothe_stock_kgm2_native');
-print('Band names:', img.bandNames());
-print('Projection:', img.projection());
-print('Scale (m):',  img.projection().nominalScale());
+// Verify the Sothe uncertainty asset after upload
+var unc = ee.Image('users/YOUR_USERNAME/SOC_comparison/sothe_unc_kgm2_native');
+print('Uncertainty band names:', unc.bandNames());
+print('Projection:',             unc.projection());
+print('Scale (m):',              unc.projection().nominalScale());
 ```
 
 Check that:
-- The band name matches what you will put in `SOTHE_STOCK_BAND`
+- The band name matches what you will put in `SOTHE_UNC_BAND`
 - The projection is correct (EPSG:3978 or the expected native CRS)
+
+> **Sothe stock verification** (community catalog — no upload needed):
+> Paste the one-liner below into a new script to confirm the stock band name
+> before filling in `SOTHE_STOCK_BAND`:
+> ```javascript
+> print(ee.ImageCollection('projects/sat-io/open-datasets/carbon_stocks_ca/sc')
+>         .first().bandNames());
+> ```
 
 ### 3.5 Activate a layer stub in the GEE script
 
@@ -248,42 +268,72 @@ After a successful upload:
 
 ## 4. Running the GEE Script
 
-### 4.1 Verify SoilGrids band names (do this once before first run)
+### 4.1 Confirm SoilGrids and Sothe band names (do this once before first run)
 
-SoilGrids band names change between asset versions. Before running the full
-script, confirm the current band names by pasting this into a **new, separate**
-GEE script:
+**SoilGrids SOC and BDOD bands** — confirmed from Charlie's Place KBA v4.2, but
+paste the lines below into a new GEE script to verify nothing has changed since
+the community catalog was last updated:
 
 ```javascript
-var ocs = ee.Image('projects/soilgrids-isric/assets/ocs_mean');
-print('SoilGrids OCS bands:', ocs.bandNames());
+// These band names were confirmed in Charlie's Place KBA v4.2 (Step 2 diagnostics)
+print('SOC bands:',  ee.Image('projects/soilgrids-isric/soc_mean').bandNames());
+print('BDOD bands:', ee.Image('projects/soilgrids-isric/bdod_mean').bandNames());
 ```
 
-The output will list all available bands. Identify:
-- The 0–1 m organic carbon stock band (or the 0–30 cm and 30–100 cm bands
-  that must be summed — see note in the LAYERS registry)
-- The Q05 and Q95 quantile bands
+Expected output:
+- SOC: `soc_0-5cm_mean`, `soc_5-15cm_mean`, `soc_15-30cm_mean`, `soc_30-60cm_mean`, `soc_60-100cm_mean`
+- BDOD: `bdod_0-5cm_mean`, `bdod_5-15cm_mean`, `bdod_15-30cm_mean`, `bdod_30-60cm_mean`, `bdod_60-100cm_mean`
 
-Update the `bandName` and `uncBandName` fields in the `soilgrids` entry of
-the LAYERS registry before proceeding.
+If the band names have changed, update `socBands` and `bdodBands` in the `soilgrids`
+entry of the LAYERS registry (Section 2 of the GEE script).
+
+**SoilGrids uncertainty (Q05/Q95) bands** — the quantile asset paths still need
+verification. Paste this to check:
+
+```javascript
+// Check which uncertainty assets exist and their band names
+// (expected: soc_p5 and soc_p95, or similar naming)
+print('Q05 bands:', ee.Image('projects/soilgrids-isric/soc_p5').bandNames());
+print('Q95 bands:', ee.Image('projects/soilgrids-isric/soc_p95').bandNames());
+```
+
+Once confirmed, update `uncAssetPath`, `uncBandName`, `uncQ95AssetPath`, and
+`uncQ95BandName` in the `soilgrids` entry and remove the `VERIFY_` prefix from
+those fields to activate uncertainty computation.
+
+**Sothe soil carbon stock band name** — the community catalog asset exists but
+the native band name needs to be confirmed before running:
+
+```javascript
+print('Sothe SC bands:',
+  ee.ImageCollection('projects/sat-io/open-datasets/carbon_stocks_ca/sc')
+    .first().bandNames());
+```
+
+Update `SOTHE_STOCK_BAND` in Section 0 with the confirmed name.
 
 ### 4.2 Fill in the CONFIG block
 
-Open `soc_comparison_gee.js` and replace every `PLACEHOLDER` value at the
-top of the script (Section 0):
+Open `soc_comparison_gee.js` and update the values at the top of the script
+(Section 0). The table below shows what still requires user input:
 
-| Variable | What to fill in |
-|----------|----------------|
-| `SOTHE_STOCK_ASSET` | GEE asset path for the Sothe stock raster, e.g. `users/YOUR_USERNAME/SOC_comparison/sothe_stock_kgm2_native` |
-| `SOTHE_STOCK_BAND` | Band name confirmed by `print(bandNames())` in Step 3.4 |
-| `SOTHE_UNC_ASSET` | GEE asset path for the Sothe uncertainty raster |
-| `SOTHE_UNC_BAND` | Band name in the uncertainty asset |
-| `GEE_USERNAME` | Your GEE username (not your email — just the username shown in the Code Editor URL) |
-| `ECOZONES_ASSET` | GEE asset path for a Canada ecozones polygon FeatureCollection. If you do not have one, see the fallback comment in Section 7 of the GEE script. |
+| Variable | Status | What to fill in |
+|----------|--------|----------------|
+| `SOTHE_STOCK_ASSET` | **Pre-filled** | `projects/sat-io/open-datasets/carbon_stocks_ca/sc` (community catalog — no change needed) |
+| `SOTHE_STOCK_BAND` | **Needs verification** | Run the `bandNames()` one-liner from Step 4.1 and fill in the confirmed band name |
+| `SOTHE_UNC_ASSET` | **Required** | Your uploaded uncertainty asset path, e.g. `users/YOUR_USERNAME/SOC_comparison/sothe_unc_kgm2_native` |
+| `SOTHE_UNC_BAND` | **Required** | Band name confirmed in Step 3.4 |
+| `GEE_USERNAME` | **Required** | Your GEE username (not your email — just the username shown in the Code Editor URL) |
+| `ECOZONES_ASSET` | **Required** | GEE asset path for a Canada ecozones polygon FeatureCollection. If you do not have one, see the fallback comment in Section 7 of the GEE script. |
 
-The script includes a startup check that throws an error immediately if any
-`PLACEHOLDER` value is still present. You will see the error in the console
-before any computation begins.
+The script throws an error immediately if any `PLACEHOLDER` value is still
+present, and prints a warning (non-fatal) if any `VERIFY_` value is still set.
+Both will appear in the console before any computation begins.
+
+> **SoilGrids requires no config changes.** The `soilgrids` layer uses
+> `computeOCS: true` and reads directly from the community catalog
+> `soc_mean` and `bdod_mean` assets with confirmed band names. No asset
+> path or convFactor needs to be changed in the CONFIG block.
 
 ### 4.3 Open the script in the GEE Code Editor
 
@@ -311,10 +361,19 @@ Go to <https://code.earthengine.google.com/> and either:
 3. Wait for `COMPLETED` status.
 4. Open the **Assets panel**, find `sothe_stock_kgm2`, and click to inspect
    it visually.
-5. **Expected values:** boreal peatland pixels should show approximately
-   20–80 kg/m². If values look implausibly small (e.g., <1) or implausibly
-   large (e.g., >200), stop and re-check the `convFactor` and `bandName`
-   in the LAYERS registry.
+5. **Expected values by region (Sothe 0–1 m):**
+
+   | Region | Expected range (kg/m²) |
+   |--------|------------------------|
+   | Hudson Bay Lowlands (boreal peatland) | 40–80 |
+   | Boreal forest (mixed mineral soil) | 5–20 |
+   | Prairie / Alberta agricultural | 3–10 |
+   | Arctic tundra (permafrost) | 10–40 |
+
+   If values are implausibly low (<1 across boreal areas) or high (>200),
+   stop and re-check `SOTHE_STOCK_BAND` in the CONFIG block. The community
+   catalog band name must match exactly — a mismatched band name typically
+   returns near-zero or all-null pixels.
 
 **Stage 3 — Groups B, C, D:**
 
